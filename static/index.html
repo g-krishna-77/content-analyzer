@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Content Analyzer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e7e9ee;
+    --muted: #9aa2b1;
+    --accent: #6ee7b7;
+    --accent-dim: #2f4f43;
+    --danger: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 2.5rem 1.5rem 4rem;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.25rem; }
+  p.subtitle { color: var(--muted); margin-top: 0; margin-bottom: 2rem; font-size: 0.95rem; }
+  form { display: flex; gap: 0.5rem; margin-bottom: 2rem; }
+  input[type="url"] {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.7rem 0.9rem;
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+  input[type="url"]:focus { outline: none; border-color: var(--accent); }
+  button {
+    background: var(--accent);
+    color: #0b120e;
+    border: none;
+    border-radius: 8px;
+    padding: 0.7rem 1.2rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .card h2 { font-size: 1.05rem; margin: 0 0 0.9rem; }
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
+  }
+  .metric { background: #12151b; border-radius: 8px; padding: 0.6rem 0.8rem; }
+  .metric .label { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .metric .value { font-size: 1.15rem; font-weight: 600; margin-top: 0.15rem; }
+  .error { color: var(--danger); font-size: 0.9rem; margin-bottom: 1rem; }
+  #history a { color: var(--muted); text-decoration: none; font-size: 0.85rem; }
+  #history a:hover { color: var(--accent); }
+  #history li { margin-bottom: 0.4rem; }
+  .sentiment-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Content Analyzer</h1>
+  <p class="subtitle">Paste any article URL. It extracts the text and runs sentiment + readability analysis on it.</p>
+
+  <form id="analyze-form">
+    <input type="url" id="url-input" placeholder="https://example.com/some-article" required>
+    <button type="submit" id="submit-btn">Analyze</button>
+  </form>
+
+  <div id="error" class="error" style="display:none;"></div>
+  <div id="result"></div>
+
+  <div class="card">
+    <h2>Recent analyses</h2>
+    <ul id="history" style="list-style:none; padding:0; margin:0;"></ul>
+  </div>
+</main>
+
+<script>
+const form = document.getElementById('analyze-form');
+const urlInput = document.getElementById('url-input');
+const submitBtn = document.getElementById('submit-btn');
+const resultEl = document.getElementById('result');
+const errorEl = document.getElementById('error');
+const historyEl = document.getElementById('history');
+
+function fmt(n) { return typeof n === 'number' ? Math.round(n * 100) / 100 : n; }
+
+function renderResult(data) {
+  const m = data.metrics;
+  resultEl.innerHTML = `
+    <div class="card">
+      <h2>${data.title}</h2>
+      <div class="metrics-grid">
+        <div class="metric"><div class="label">Word count</div><div class="value">${m.word_count}</div></div>
+        <div class="metric"><div class="label">Sentences</div><div class="value">${m.sentence_count}</div></div>
+        <div class="metric"><div class="label">Avg sentence length</div><div class="value">${fmt(m.avg_sentence_length)}</div></div>
+        <div class="metric"><div class="label">Avg word length</div><div class="value">${fmt(m.avg_word_length)}</div></div>
+        <div class="metric"><div class="label">Syllables / word</div><div class="value">${fmt(m.syllables_per_word)}</div></div>
+        <div class="metric"><div class="label">Personal pronouns</div><div class="value">${m.personal_pronouns}</div></div>
+        <div class="metric"><div class="label">Flesch reading ease</div><div class="value">${fmt(m.readability.flesch_reading_ease)}</div></div>
+        <div class="metric"><div class="label">Flesch-Kincaid grade</div><div class="value">${fmt(m.readability.flesch_kincaid_grade)}</div></div>
+        <div class="metric"><div class="label">Gunning fog</div><div class="value">${fmt(m.readability.gunning_fog)}</div></div>
+        <div class="metric"><div class="label">Sentiment (compound)</div><div class="value">${fmt(m.sentiment.compound)}</div></div>
+      </div>
+      <div class="sentiment-bar">
+        <div style="width:${m.sentiment.positive*100}%; background:#6ee7b7;"></div>
+        <div style="width:${m.sentiment.neutral*100}%; background:#3a3f4b;"></div>
+        <div style="width:${m.sentiment.negative*100}%; background:#f87171;"></div>
+      </div>
+    </div>
+  `;
+}
+
+async function loadHistory() {
+  const res = await fetch('/analyses?limit=10');
+  const items = await res.json();
+  historyEl.innerHTML = items.map(a =>
+    `<li><a href="#" data-id="${a.id}">${a.title || a.url}</a></li>`
+  ).join('') || '<li style="color:var(--muted)">No analyses yet.</li>';
+
+  historyEl.querySelectorAll('a').forEach(a => {
+    a.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const res = await fetch(`/analyses/${a.dataset.id}`);
+      const data = await res.json();
+      renderResult(data);
+    });
+  });
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorEl.style.display = 'none';
+  resultEl.innerHTML = '';
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Analyzing...';
+
+  try {
+    const res = await fetch('/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: urlInput.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Something went wrong');
+    renderResult(data);
+    loadHistory();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.style.display = 'block';
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Analyze';
+  }
+});
+
+loadHistory();
+</script>
+</body>
+</html>
